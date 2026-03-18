@@ -895,7 +895,7 @@ def build_gradio_app():
                     raw_audio = gr.Audio(
                         label="참조 오디오 업로드 (긴 파일 OK)",
                         type="filepath",
-                        value="/mnt/c/Users/cymmc/Videos/Bandicam/bandicam 2026-02-20 18-40-10-487.mp3",
+                        value=None,
                     )
                     with gr.Row():
                         trim_min = gr.Slider(
@@ -919,7 +919,7 @@ def build_gradio_app():
                 label="참조 오디오 텍스트 (선택)",
                 placeholder="참조 오디오에서 말하는 내용을 입력하면 정확도가 올라갑니다",
                 lines=2,
-                value="책임자다보니까 대체로 예산과 관련된 결정이 많을텐데 그 결정 하나하나가 사실 자신에게 연말에 큰 부담으로 다가올 수 가 있겠죠 그 결정들이 그러니까 확실하지 않으면 모른다 안된다 그냥 이렇게 해버리는 거거든요",
+                value="",
             )
 
         btn_trim.click(
