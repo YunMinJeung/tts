@@ -1,0 +1,6 @@
+qwen-tts
+torch
+soundfile
+gradio>=4.0
+numpy
+python-docx
