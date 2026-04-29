@@ -288,6 +288,35 @@ def _check_cancel():
         raise InterruptedError("사용자에 의해 생성이 중단되었습니다.")
 
 
+def _strip_media_tag(text: str) -> str:
+    """[STOCK], [CHART:...], [MAP:...] 등 미디어 태그를 제거하여 TTS용 텍스트 반환."""
+    return re.sub(r'^\s*\[(STOCK|CHART|MAP)(?::[^\]]*)?\]\s*', '', text, count=1, flags=re.IGNORECASE)
+
+
+# 영상 프로젝트 경로 (WSL Python에서 도므로 /mnt/e/... 사용)
+_VIDEO_PROJECT_INPUT = Path("/mnt/e/auto_content_video/input")
+
+
+def _export_to_video_project(batch_dir: Path) -> Path | None:
+    """TTS 완료 후 영상 프로젝트 input/으로 복사하고 원본 삭제. 복사된 dest 경로 반환."""
+    import shutil
+    try:
+        dest = _VIDEO_PROJECT_INPUT / batch_dir.name
+        _VIDEO_PROJECT_INPUT.mkdir(parents=True, exist_ok=True)
+        if dest.exists():
+            shutil.rmtree(dest)
+        shutil.copytree(batch_dir, dest)
+        count = len(list(dest.glob("para_*.wav")))
+        print(f"  → 영상 프로젝트로 복사 완료: {dest} ({count}개 문단)")
+        # 원본 삭제
+        shutil.rmtree(batch_dir)
+        print(f"  → TTS 원본 삭제: {batch_dir}")
+        return dest
+    except Exception as e:
+        print(f"  → 영상 프로젝트 복사 실패 (원본 유지): {e}")
+        return None
+
+
 def split_paragraphs(text: str) -> list[str]:
     """텍스트를 문단(빈 줄 기준) 단위로 분할합니다."""
     text = text.strip()
@@ -499,8 +528,11 @@ def generate_paragraphs_voice_clone(text: str, ref_audio: str, ref_text: str,
             progress_cb(f"[문단 {pi+1}/{len(paragraphs)}] {para[:30]}...")
         print(f"  [문단 {pi+1}/{len(paragraphs)}] {para[:50]}")
 
+        # 미디어 태그 제거 (TTS에서 태그를 읽지 않도록)
+        tts_text = _strip_media_tag(para)
+
         # 문단 내 문장 분할 후 생성
-        sentences = split_text(para)
+        sentences = split_text(tts_text)
         all_wavs = []
         sr = None
         for i, sent in enumerate(sentences):
@@ -521,9 +553,14 @@ def generate_paragraphs_voice_clone(text: str, ref_audio: str, ref_text: str,
         sf.write(str(filepath), combined, sr)
         filepaths.append(str(filepath))
 
-        # 자막용 텍스트 파일 저장 (음성 파일과 1:1 매칭)
+        # 텍스트 파일에는 태그 포함 원문 저장 (영상 파이프라인에서 태그 파싱용)
         txt_path = batch_dir / f"para_{pi+1:02d}.txt"
         txt_path.write_text(para, encoding="utf-8")
+
+    # 영상 프로젝트로 복사 + 원본 삭제 → 복사된 경로로 갱신
+    dest = _export_to_video_project(batch_dir)
+    if dest is not None:
+        filepaths = [str(dest / Path(p).name) for p in filepaths]
 
     return filepaths
 
@@ -551,7 +588,10 @@ def generate_paragraphs_voice_design(text: str, voice_description: str,
             progress_cb(f"[문단 {pi+1}/{len(paragraphs)}] {para[:30]}...")
         print(f"  [문단 {pi+1}/{len(paragraphs)}] {para[:50]}")
 
-        sentences = split_text(para)
+        # 미디어 태그 제거 (TTS에서 태그를 읽지 않도록)
+        tts_text = _strip_media_tag(para)
+
+        sentences = split_text(tts_text)
         all_wavs = []
         sr = None
         for i, sent in enumerate(sentences):
@@ -569,9 +609,14 @@ def generate_paragraphs_voice_design(text: str, voice_description: str,
         sf.write(str(filepath), combined, sr)
         filepaths.append(str(filepath))
 
-        # 자막용 텍스트 파일 저장 (음성 파일과 1:1 매칭)
+        # 텍스트 파일에는 태그 포함 원문 저장 (영상 파이프라인에서 태그 파싱용)
         txt_path = batch_dir / f"para_{pi+1:02d}.txt"
         txt_path.write_text(para, encoding="utf-8")
+
+    # 영상 프로젝트로 복사 + 원본 삭제 → 복사된 경로로 갱신
+    dest = _export_to_video_project(batch_dir)
+    if dest is not None:
+        filepaths = [str(dest / Path(p).name) for p in filepaths]
 
     return filepaths
 
@@ -1121,9 +1166,23 @@ def main():
         run_cli(args)
     else:
         import gradio as gr
-        print("Qwen3-TTS 웹 UI를 시작합니다...")
-        app = build_gradio_app()
-        app.launch(server_port=args.port, share=args.share, theme=gr.themes.Soft())
+        import uvicorn
+        from fastapi import FastAPI
+        from tts_api import register_routes
+
+        print("Qwen3-TTS 웹 UI + API 서버를 시작합니다...")
+        fastapi_app = FastAPI(title="Qwen3-TTS API", version="1.0")
+        register_routes(fastapi_app)
+
+        blocks = build_gradio_app()
+        blocks.queue()
+        gr.mount_gradio_app(fastapi_app, blocks, path="/")
+
+        host = "0.0.0.0" if args.share else "127.0.0.1"
+        print(f"  UI:  http://{host}:{args.port}/")
+        print(f"  API: http://{host}:{args.port}/api/tts/health")
+        print(f"  Docs: http://{host}:{args.port}/docs")
+        uvicorn.run(fastapi_app, host=host, port=args.port)
 
 
 if __name__ == "__main__":
